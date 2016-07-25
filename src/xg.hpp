@@ -50,7 +50,7 @@ trav_t make_trav(id_t id, bool is_end, int32_t rank);
 
 class XG {
 public:
-    
+
     XG(void) : start_marker('#'),
                end_marker('$'),
                seq_length(0),
@@ -74,7 +74,7 @@ public:
     // is faster.
     void from_callback(function<void(function<void(Graph&)>)> get_chunks,
         bool validate_graph = false, bool print_graph = false,
-        bool store_threads = false, bool is_sorted_dag = false); 
+        bool store_threads = false, bool is_sorted_dag = false);
     void build(map<id_t, string>& node_label,
                map<side_t, set<side_t> >& from_to,
                map<side_t, set<side_t> >& to_from,
@@ -91,6 +91,11 @@ public:
     size_t node_count;
     size_t edge_count;
     size_t path_count;
+
+    // We need the w function, which we call the "where_to" function. It tells
+    // you, from a given visit at a given side, what visit offset if you go to
+    // another side.
+    int64_t where_to(int64_t current_side, int64_t visit_offset, int64_t new_side) const;
 
     size_t id_to_rank(int64_t id) const;
     int64_t rank_to_id(size_t rank) const;
@@ -155,7 +160,7 @@ public:
     int64_t prev_path_node_by_id(size_t path_rank, int64_t id) const;
     // estimate distance (in bp) between two nodes along a path.
     // if a nodes isn't on the path, the nearest node on the path (using id space)
-    // is used as a proxy.  
+    // is used as a proxy.
     int64_t approx_path_distance(const string& name, int64_t id1, int64_t id2) const;
     // like above, but find minumum over list of paths.  if names is empty, do all paths
     int64_t min_approx_path_distance(const vector<string>& names, int64_t id1, int64_t id2) const;
@@ -181,25 +186,28 @@ public:
     void get_id_range_by_length(int64_t id1, int64_t length, Graph& g, bool forward) const;
 
     // gPBWT interface
-    
+
 #if GPBWT_MODE == MODE_SDSL
     // We keep our strings in instances of this cool wavelet tree.
     using rank_select_int_vector = sdsl::wt_huff<sdsl::rrr_vector<>>;
 #elif GPBWT_MODE == MODE_DYNAMIC
     using rank_select_int_vector = dyn::rle_str;
 #endif
-    
-    
+
+
     // We define a thread visit that's much smaller than a Protobuf Mapping.
     struct ThreadMapping {
         int64_t node_id;
         bool is_reverse;
     };
-    
+
+    int64_t node_height(ThreadMapping node) const;
+    int64_t threads_starting_at_node(ThreadMapping node) const;
+
     // We define a thread as just a vector of these things, instead of a bulky
     // Path.
     using thread_t = vector<ThreadMapping>;
-    
+
     // Insert a thread. Path name must be unique or empty.
     void insert_thread(const thread_t& t);
     // Insert a whole group of threads. Names should be unique or empty (though
@@ -220,7 +228,7 @@ public:
     // Count matches to a subthread among embedded threads
     size_t count_matches(const thread_t& t) const;
     size_t count_matches(const Path& t) const;
-    
+
     /**
      * Represents the search state for the graph PBWT, so that you can continue
      * a search with more of a thread, or backtrack.
@@ -235,25 +243,25 @@ public:
         int64_t range_start = 0;
         // And what is the past-the-last visit that is selected?
         int64_t range_end = numeric_limits<int64_t>::max();
-        
+
         // How many visits are selected?
         inline int64_t count() {
             return range_end - range_start;
         }
-        
+
         // Return true if the range has nothing selected.
         inline bool is_empty() {
             return range_end <= range_start;
         }
     };
-    
+
     // Extend a search with the given section of a thread.
     void extend_search(ThreadSearchState& state, const thread_t& t) const;
 
-    
+
     char start_marker;
     char end_marker;
-    
+
 private:
 
     // sequence/integer vector
@@ -324,20 +332,20 @@ private:
     bit_vector ep_bv; // entity delimiters in ep_iv
     rank_support_v<1> ep_bv_rank;
     bit_vector::select_1_type ep_bv_select;
-    
+
     // Succinct thread storage
-    
+
     // Threads are haplotype paths in the graph with no edits allowed, starting
     // and stopping at node boundaries.
-    
+
     // TODO: Explain the whole graph PBWT extension here
-    
+
     // Basically we keep usage counts for every element in the graph, and and
     // array of next-node-start sides for each side in the graph. We number
     // sides as 2 * xg internal node ID, +1 if it's a right side. This leaves us
     // 0 and 1 free for representing the null destination side and to use as a
     // per-side array run separator, respectively.
-    
+
     // This holds, for each node and edge, in each direction (with indexes as in
     // the entity vector f_iv, *2, and +1 for reverse), the usage count (i.e.
     // the number of times it is visited by encoded threads). This doesn't have
@@ -349,7 +357,7 @@ private:
     // and not (yet) the other, the usage counts in both directions will be
     // different.
     int_vector<> h_iv;
-    
+
     // This (as an extension to the algorithm described in the paper) holds the
     // number of threads beginning at each node. This isn't any extra
     // information relative to what's in the usage count array, but it's cheaper
@@ -357,13 +365,13 @@ private:
     // a side every time.
     // ts stands for "thread start"
     int_vector<> ts_iv;
-    
+
 #if GPBWT_MODE == MODE_SDSL
     // We use this for creating the sub-parts of the uncompressed B_s arrays.
     // We don't really support rank and select on this.
     vector<string> bs_arrays;
 #endif
-    
+
     // This holds the concatenated Benedict arrays, with BS_SEPARATOR separating
     // them, and BS_NULL noting the null side (i.e. the thread ends at this
     // node). Instead of holding destination sides, we actually hold the index
@@ -372,15 +380,15 @@ private:
     // room for the null sentinel and the separator. Currently the separator
     // isn't used; we just place these by side.
     rank_select_int_vector bs_single_array;
-    
+
     // A "destination" is either a local edge number + 2, BS_NULL for stopping,
     // or possibly BS_SEPARATOR for cramming multiple Benedict arrays into one.
     using destination_t = size_t;
-    
+
     // Constants used as sentinels in bs_iv above.
     const static destination_t BS_SEPARATOR;
     const static destination_t BS_NULL;
-    
+
     // We access this only through these wrapper methods, because we're going to
     // swap out functionality.
     // Sides are from 1-based node ranks, so start at 2.
@@ -394,17 +402,10 @@ private:
     void bs_set(int64_t side, vector<destination_t> new_array);
     // Insert into the B_s array for a side
     void bs_insert(int64_t side, int64_t offset, destination_t value);
-    
+
     // Prepare the B_s array data structures for query. After you call this, you
     // shouldn't call bs_set or bs_insert.
     void bs_bake();
-    
-    
-    
-    // We need the w function, which we call the "where_to" function. It tells
-    // you, from a given visit at a given side, what visit offset if you go to
-    // another side.
-    int64_t where_to(int64_t current_side, int64_t visit_offset, int64_t new_side) const;
 };
 
 class XGPath {
@@ -421,7 +422,7 @@ public:
            size_t* unique_member_count_out = nullptr);
     // Path names are stored in the XG object, in a compressed fashion, and are
     // not duplicated here.
-    
+
     sd_vector<> members;
     rank_support_sd<1> members_rank;
     select_support_sd<1> members_select;
